@@ -1,0 +1,241 @@
+---
+title: "Analiza długości śledzi"
+author: "Kacper Balicki"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    number_sections: true
+    toc: true
+    toc_float: true
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+raw_data <- read.csv("sledzie.csv")
+
+```
+
+```{r biblioteki, warning=FALSE, message=FALSE}
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(ggplot2)
+library(plotly)
+library(ggcorrplot)
+library(ggiraph)
+library(caret)
+library(elasticnet)
+```
+
+```{r wczytanie_i_uzupelnienie_danych}
+df <- raw_data  %>% mutate_all(as.numeric) %>%
+  fill(c(cfin1,cfin2,chel1,chel2,lcop1,lcop2,fbar,recr,cumf,totaln,sst,sal), .direction="downup")
+```
+
+# Wstęp
+W ostatnich latach zauważono spadek rozmiaru śledzia. Poniższy raport pokazuje jak zmiany następowały w czasie. Po przeprowadzonej analizie można wywnioskować, że głównymi przyczynami karłowacenia śledzi są wzrost temperatury wód oraz wzrost natężenia połowów w rejonie.
+
+
+```{r echo=F, warning=F}
+library(DT)
+prettyTable <- function(table_df, round_digits=2) {
+    DT::datatable(table_df, style="bootstrap", filter = "top", rownames = FALSE, extensions = "Buttons", options = list(dom = 'Bfrtip', buttons = c('copy', 'csv', 'excel', 'pdf', 'print'))) %>% formatRound(names(dplyr::select_if(table_df, is.numeric)), round_digits)
+}
+```
+
+# Podsumowanie zbioru i podstawowe statystyki
+Zbiór danych składa się z `r ncol(df)` kolumn oraz `r nrow(df)` wierszy. Zawiera informacje o śledziach - szczegoły niżej .
+Zakładamy, że dane w zbiorze są ułożone w sposób chronologiczny. Podczas wczytania danych, w niektórych kolumnach brakowało wartości co było oznaczone znakiem '?'. Aby nie usuwać pozostałych danych na rzecz jednej brakującej komórki, zastąpiono wartości brakujące wartościami sąsiadującymi u góry lub u dołu.
+
+## Opis kolumn
+[ `r typeof(df$X) ` ] **X**: numer pomiaru; 
+
+[ `r typeof(df$length) ` ] **length**: długość złowionego śledzia [cm];
+
+[ `r typeof(df$cfin1) ` ] **cfin1**: dostępność planktonu [zagęszczenie Calanus finmarchicus gat. 1];
+
+[ `r typeof(df$cfin2) ` ] **cfin2**: dostępność planktonu [zagęszczenie Calanus finmarchicus gat. 2];
+
+[ `r typeof(df$chel1) ` ] **chel1**: dostępność planktonu [zagęszczenie Calanus helgolandicus gat. 1];
+
+[ `r typeof(df$chel2) ` ] **chel2**: dostępność planktonu [zagęszczenie Calanus helgolandicus gat. 2];
+
+[ `r typeof(df$lcop1) ` ] **lcop1**: dostępność planktonu [zagęszczenie widłonogów gat. 1];
+
+[ `r typeof(df$lcop2) ` ] **lcop2**: dostępność planktonu [zagęszczenie widłonogów gat. 2];
+
+[ `r typeof(df$fbar) ` ] **fbar**: natężenie połowów w regionie [ułamek pozostawionego narybku];
+
+[ `r typeof(df$recr) ` ] **recr**: roczny narybek [liczba śledzi];
+
+[ `r typeof(df$cumf) ` ] **cumf**: łączne roczne natężenie połowów w regionie [ułamek pozostawionego narybku];
+
+[ `r typeof(df$totaln) ` ] **totaln**: łączna liczba ryb złowionych w ramach połowu [liczba śledzi];
+
+[ `r typeof(df$sst) ` ] **sst**: temperatura przy powierzchni wody [°C];
+
+[ `r typeof(df$sal) ` ] **sal**: poziom zasolenia wody [Knudsen ppt];
+
+[ `r typeof(df$xmonth) ` ] **xmonth**: miesiąc połowu [numer miesiąca];
+
+[ `r typeof(df$nao) ` ] **nao**: oscylacja północnoatlantycka [mb].
+
+## Podsumowanie wartości w poszczególnych kolumnach 
+
+```{r warning=F}
+kable(summary(select(df,-(X))))
+```
+# Analiza atrybutów
+## Dostępność plantonu w kolejnych połowach {-}
+```{r wykresy}
+p <- ggplot(df, aes(x=X)) +
+  geom_smooth(aes(y = cfin1,colour="cfin1", color = "#00e673")) + 
+  geom_smooth(aes(y = cfin2,colour="cfin2", color="#0099ff")) + 
+  geom_smooth(aes(y = chel1,colour="chel1", color="#cc33ff")) +
+  geom_smooth(aes(y = chel2,colour="chel2", color="#009900")) +
+  geom_smooth(aes(y = lcop1,colour="lcop1", color="#ff9900")) +
+  geom_smooth(aes(y = lcop2,colour="lcop2", color="#cc0000")) +
+  scale_colour_manual(name="legend", values=c("#00e673", "#0099ff","#cc33ff","#009900","#ff9900","#cc0000")) +
+  ylab(bquote("Plankton availability"))
+
+ggplotly(p)
+#  p <- ggplot(df, aes(x=length)) +  geom_histogram(aes(y=after_stat(density)), binwidth =.5, colour="black", fill="white") 
+# + geom_density(alpha=.2, fill="#FF6666") 
+#p <- p + facet_wrap(~xmonth)
+#  ggplotly(p)
+```
+
+### Długość śledzia w kolejnych pomiarach {-}
+```{r wykres_dlugosc_w_miesiacach}
+  p <- ggplot(df, aes(x=X)) + geom_smooth(aes(y = length))
+  ggplotly(p)
+
+```
+
+
+## Wykres korelacji atrybutów {-}
+```{r}
+#ggcorrplot(cor(df),
+#         method = "shade",
+#         type="full",
+#         diag = TRUE,
+#         tl.col = "black",
+#         bg = "white",
+#         title ="cos tam",
+#         col = NULL) -> c
+
+ggcorrplot(round(cor(df[-1]),1),
+           #hc.order = TRUE,
+           #type="full",
+           #outline.col = "white",
+           #tl.col = "black",
+           #p.mat=cor_pmat(df[-1]),
+           lab=TRUE,
+           lab_size = 3
+           ) -> c
+
+ggplotly(c)
+
+```
+Powyższy wykres przedstawia, że:
+
+- zagęszczenie widłonogów gat. 2 jest skorelowane z zagęszczeniem Calanus helgolandicus gat. 2 oraz Calanus finmarchicus gat. 1
+
+- zagęszczenie widłonogów gat. 1 jest skorelowane z zagęszczeniem Calanus helgolandicus gat. 1
+
+- łączne roczne natężenie połowów w regionie nie jest skorelowane z łączną liczbą ryb złowionych w ramach połowu
+
+Wykres jednak nie wykazuje, aby któryś z czynników miał wyraźny wpływ na długość śledzia.
+```{r regresor, cache=TRUE}
+set.seed(23)
+
+training_percentage <- .75
+ctrl_n <- 2
+ctrl_r <- 5
+ntree <- 10
+
+
+inTraining <- createDataPartition(
+  y = df$length,
+  p = training_percentage,
+  list= FALSE
+)
+
+training <- df[inTraining,]
+testing <- df[-inTraining,]
+
+ctrl <- trainControl(
+  method = "repeatedcv",
+  number = ctrl_n,
+  repeats = ctrl_r
+)
+
+fit <- train(
+  length ~ .,
+  data = training,
+  method = "rf",
+  trControl = ctrl,
+  ntree = ntree
+)
+
+```
+
+# Regresja
+## Założenia {-}
+
+**wielkość zbioru treningowego**: `r training_percentage * 100 `% zbioru pierwotnego
+
+**metoda schematu uczenia**: powtórzona ocena krzyżowa
+
+**liczba podziałów**: `r ctrl_n`
+
+**liczba powtórzeń**: `r ctrl_r`
+
+**liczba drzew w lesie (metoda random forest)**: `r ntree`
+
+## Random Forest
+### Wynik uczenia modelu {-}
+```{r regresja_zalozenia}
+  fit
+  ggplotly(ggplot(fit))
+
+```
+
+### Wpływ parametru na rozmiar śledzia {-}
+```{r wplyw_rf}
+rfClasses <- predict(fit, newdata = testing)
+varImp(fit)
+ggplotly(ggplot(varImp(fit)))
+```
+### Wnioski {-}
+Jak widać na poniższym wykresie najbardziej znaczącym parametrem był sst - temperatura przy powierzchni wody. Drugim był X, jednak jest to numer połowu przez co ignorujemy ten wynik. W efekcie drugim najbardziej znaczącym jest parametr natężenie połowów w regionie, który ma zdecydowanie niższą wartość niż pierwszy.
+
+## RIDGE
+
+```{r ridge, cache=TRUE}
+  fit2 <- train(
+    length ~ .,
+    data = training,
+    method = "ridge",
+    trControl = ctrl
+)
+```
+
+### Wynik uczenia modelu {-}
+
+```{r regresja_ridge}
+  fit2
+  ggplotly(ggplot(fit2))
+
+```
+
+### Wpływ parametru na rozmiar śledzia {-}
+```{r wplyw_ridge, cache = TRUE}
+rfClasses <- predict(fit2, newdata = testing)
+varImp(fit2)
+ggplotly(ggplot(varImp(fit2)))
+```
+### Wnioski {-}
+Jak widać po zignorowaniu parametru X (numer pomiaru), najbardziej znaczącym parametrem znowu jest temperatura przy powierzchni wody. Innymi ważnymi były parametry nao, czy jak w poprzednim badaniu parametr fbar - natężenie połowów w regionie.
